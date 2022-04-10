@@ -26,6 +26,15 @@ __device__ void prefix_sum(int arr[], int arr_size)
 __device__ 
 void interpolate_device(uchar* maps ,uchar *in_img, uchar* out_img);
 
+/**
+ * @brief takes an image given in all_in, and return the processed image in all_out 
+ * 
+ * @param all_in single input image, in global memory.
+ * @param all_out single output image, in global memory.
+ * @param maps 3D array ([TILES_COUNT][TILES_COUNT][256]) of    
+ *             the tiles’ maps, in global memory.
+ * @return __global__ 
+ */
 __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps) {
     // TODO
     interpolate_device(all_in, all_out, maps);
