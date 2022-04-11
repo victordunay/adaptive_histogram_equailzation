@@ -15,6 +15,19 @@ __device__ void prefix_sum(int arr[], int arr_size)
     return;
 }
 
+__device__ void convert_image_to_tiles(uchar *tiles,  uchar *images_in)
+{
+
+  int x = blockIdx.x * TILE_WIDTH + threadIdx.x;
+  int y = blockIdx.y * TILE_WIDTH + threadIdx.y;
+
+  for (int tile_index = 0; tile_index < N_BLOCKS; ++tile_index )
+  {
+     tiles[tile_index][threadIdx.y * TILE_DIM + threadIdx.x] = images_in[y * IMG_WIDTH + x];
+  }
+
+}
+
 /**
  * Perform interpolation on a single image
  *
@@ -35,15 +48,30 @@ void interpolate_device(uchar* maps ,uchar *in_img, uchar* out_img);
  *             the tiles’ maps, in global memory.
  * @return __global__ 
  */
-__global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps) {
-    // TODO
+__global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps) 
+{
+    __shared__ histogram histograms[N_BLOCKS];
+    __shared__ tile tiles[N_BLOCKS];
+
+    convert_image_to_tiles(&tiles, &all_in)
+    __syncthreads();
+    // create histogram
+
+    // use prefix scan to generate cdf
+
+    // calculate map
+
     interpolate_device(all_in, all_out, maps);
     return; 
 }
 
 /* Task serial context struct with necessary CPU / GPU pointers to process a single image */
-struct task_serial_context {
+struct task_serial_context
+ {
     // TODO define task serial memory buffers
+    uchar *image_in;
+    uchar *image_out;
+    uchar *maps;
 };
 
 /* Allocate GPU memory for a single input image and a single output image.
@@ -54,9 +82,19 @@ struct task_serial_context *task_serial_init()
     auto context = new task_serial_context;
 
     //TODO: allocate GPU memory for a single input image, a single output image, and maps
+    CUDA_CHECK(cudaHostAlloc(context->image_in, IMG_HEIGHT * IMG_WIDTH, 0));
+    CUDA_CHECK(cudaHostAlloc(context->image_out, IMG_HEIGHT * IMG_WIDTH, 0));
+    CUDA_CHECK(cudaHostAlloc(context->maps, TILES_COUNT * TILES_COUNT * N_BINS, 0));
 
     return context;
 }
+
+
+
+
+
+
+
 
 /* Process all the images in the given host array and return the output in the
  * provided output host array */
@@ -66,6 +104,33 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
     //   1. copy the relevant image from images_in to the GPU memory you allocated
     //   2. invoke GPU kernel on this image
     //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
+    
+    int image_index = 0;
+    dim3 block_size(IMG_WIDTH / TILE_WIDTH, IMG_HEIGHT / TILE_WIDTH);
+    dim3 grid_size(TILE_WIDTH, TILE_WIDTH);
+  __shared__ tile tiles_array[N_BLOCKS];
+
+
+
+
+
+
+
+
+
+    for (image_index = 0; image_index < N_IMAGES ; ++image_index)
+    {
+         //   1. copy the relevant image from images_in to the GPU memory you allocated
+        cudaMemcpy(context->image_in, &images_in[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyHostToDevice);
+        
+        //   2. invoke GPU kernel on this image , fix num of threadblocks & threads
+        process_image_kernel<<<block_size, grid_size>>>(context->image_in, context->image_out, context->maps);
+        
+        //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
+        cudaMemcpy(context->image_out, &images_out[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyDeviceToDevice);
+
+    }
+
 }
 
 /* Release allocated resources for the task-serial implementation. */
