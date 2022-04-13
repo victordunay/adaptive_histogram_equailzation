@@ -17,15 +17,15 @@
 
 // user defines
 #define N_BINS (256)
+#define MAP_TILE_WIDTH (16)
 #define N_BLOCKS ( (IMG_HEIGHT * IMG_WIDTH) / (TILE_WIDTH * TILE_WIDTH) )
 #define N_THREADS_PER_BLOCK (TILE_WIDTH)
+#define N_BLOCKS_X (IMG_WIDTH / TILE_WIDTH)
+#define N_BLOCKS_Y (IMG_HEIGHT / TILE_WIDTH)
+#define NORMALIZATION_FACTOR = ( (N_BINS - 1) / (TILE_WIDTH * TILE_WIDTH) )
 
-
+// original typedef
 typedef unsigned char uchar;
-
-// user typedef
-typedef uchar tile[TILE_WIDTH * TILE_WIDTH];
-typedef int histogram[N_BINS];
 
 #define CUDA_CHECK(f) do {                                                                  \
     cudaError_t e = f;                                                                      \
@@ -60,4 +60,3 @@ void gpu_bulk_process(struct gpu_bulk_context *context, uchar *images_in, uchar 
 void gpu_bulk_free(struct gpu_bulk_context *context);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-
