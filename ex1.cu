@@ -19,13 +19,13 @@ __device__ void prefix_sum(int arr[], int arr_size)
 __device__ void convert_image_to_tiles(uchar *tiles,  uchar *images_in)
 {
 
-  int tile_index = blockIdx.x + N_BLOCKS_Y * blockIdx.y
-  int in_pixel_index = blockIdx.y * TILE_WIDTH * IMG_WIDTH + threadIdx.y * IMG_WIDTH + blockIdx.x * TILE_WIDTH + threadIdx.x;
+  //int tile_index = blockIdx.x + N_BLOCKS_Y * blockIdx.y
+  int in_pixel_index = (blockIdx.y * TILE_WIDTH + threadIdx.y) * IMG_WIDTH + blockIdx.x * TILE_WIDTH + threadIdx.x; // why do access the pixel as an array instead of matrix?
   int tile_pixel_index = threadIdx.y * TILE_DIM + threadIdx.x;
-  tiles[tile_index][tile_pixel_index] = images_in[pixel_index];
+  tiles[tile_pixel_index] = images_in[pixel_index];
 }
 
-__device__ void calculate_maps(bins_array *s_maps, bins_array *cdfs, uchar *g_maps)
+__device__ void calculate_maps(int *s_maps, int *cdfs, uchar *g_maps)
 {
     int tile_index = blockIdx.x + N_BLOCKS_Y * blockIdx.y
     int cdf_index = threadIdx.x + MAP_TILE_WIDTH * threadIdx.y;
@@ -45,23 +45,25 @@ __device__ void calculate_maps(bins_array *s_maps, bins_array *cdfs, uchar *g_ma
 }
 bins_array map[N_BLOCKS_X][N_BLOCKS_Y];
 
-__device__ void calculate_cdf(bins_array *cdfs)
-{
-   int tile_index = blockIdx.x + N_BLOCKS_Y * blockIdx.y    
-    cudaMemset(&cdfs[tile_index], 0, N_BINS * sizeof(int));
-    __syncthreads();
-    prefix_sum(&cdfs[tile_index], N_BINS);
-}
-
-__device__ void create_histogram(bins_array *histograms, tile *tiles)
+__device__ void calculate_cdf(int *cdfs)
 {
     int tile_index = blockIdx.x + N_BLOCKS_Y * blockIdx.y    
+    cudaMemset(&cdfs, 0, N_BINS * sizeof(int));
+    __syncthreads();
+    prefix_sum(&cdfs, N_BINS);
+    
+}
+
+__device__ void create_histogram(int *histograms, uchar *tiles)
+{
+    //We can accelerate this compute - https://classroom.udacity.com/courses/cs344/lessons/5605891d-c8bf-4e0d-8fed-a47920df5979/concepts/b42e8f5a-9145-450e-8c18-f23e091d33ef
+    //int tile_index = blockIdx.x + N_BLOCKS_Y * blockIdx.y    
     uchar pixel_value = 0;
-    cudaMemset(histograms[tile_index], 0, N_BINS * sizeof(int));
+    cudaMemset(histograms, 0, N_BINS * sizeof(int)); //I think it is a cpu function. what will the threads do?
     __syncthreads();
 
-    pixel_value = tiles[tile_index][threadIdx.x + TILE_WIDTH * threadIdx.y];
-    atomicAdd(&(histograms[tile_index][pixel_value]), 1);
+    pixel_value = tiles[threadIdx.x + TILE_WIDTH * threadIdx.y];
+    atomicAdd(&(histograms[pixel_value]), 1);
 }
 
 /**
@@ -85,18 +87,18 @@ __device__ void interpolate_device(uchar* maps ,uchar *in_img, uchar* out_img);
  */
 __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps) 
 {
-    __shared__ histograms[N_BLOCKS][N_BINS];
-    __shared__ cdfs[N_BLOCKS][N_BINS];
-    __shared__ maps[N_BLOCKS_X][N_BLOCKS_Y][N_BINS];
-    __shared__ tiles[N_BLOCKS][TILE_WIDTH * TILE_WIDTH];
+    //every block allocates the shared-mem for itself
+    //we need only two array for this calculation
+    __shared__ int cdfs[N_BINS];
+    __shared__ uchar tiles[TILE_WIDTH * TILE_WIDTH];
 
-    convert_image_to_tiles(&tiles, &all_in)
+    convert_image_to_tiles(tiles, all_in)
 
-    create_histogram(&histograms, &tiles)
+    create_histogram(cdfs, tiles)
 
-    calculate_cdf(&histograms)
+    calculate_cdf(cdfs)
 
-    calculate_maps(bins_array *s_maps, bins_array *cdfs, uchar *g_maps)
+    calculate_maps(cdfs, maps)
 
     interpolate_device(all_in, all_out, maps);
 
@@ -151,7 +153,7 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
         process_image_kernel<<<BLOCK_SIZE, GRID_SIZE>>>(context->image_in, context->image_out, context->maps);
         
         //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
-         CUDA_CHECK( cudaMemcpy(context->image_out, &images_out[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyDeviceToDevice) );
+        CUDA_CHECK( cudaMemcpy(context->image_out, &images_out[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyDeviceToDevice) );
     }
 }
 
