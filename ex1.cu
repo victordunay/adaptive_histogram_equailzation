@@ -7,12 +7,16 @@ __device__ void prefix_sum(int arr[], int arr_size)
     for (int stride = 1; stride < arr_size; stride *= 2) 
     {
         if (tid >= stride) 
-        // I think we should add limit condition between tid
-        // and array size for example if tid - stride> arr_size 
-            increment = arr[tid - stride];
+            if ( tid < arr_size) 
+            {
+                increment = arr[tid - stride];
+            }
         __syncthreads(); 
         if (tid >= stride) 
-            arr[tid] += increment;
+            if ( tid < arr_size) 
+            {
+                arr[tid] += increment;
+            }
         __syncthreads();
     }
     return;
