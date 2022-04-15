@@ -7,8 +7,10 @@ __device__ void prefix_sum(int arr[], int arr_size)
     for (int stride = 1; stride < arr_size; stride *= 2) 
     {
         if (tid >= stride) 
+        // I think we should add limit condition between tid
+        // and array size for example if tid - stride> arr_size 
             increment = arr[tid - stride];
-        __syncthreads();
+        __syncthreads(); 
         if (tid >= stride) 
             arr[tid] += increment;
         __syncthreads();
@@ -16,53 +18,41 @@ __device__ void prefix_sum(int arr[], int arr_size)
     return;
 }
 
-__device__ void convert_image_to_tiles(uchar *tiles,  uchar *images_in)
-{
+__device__ void convert_image_to_tiles(uchar *tile, uchar image_in[IMG_WIDTH][IMG_HEIGHT])
+{   
+    // calculate pixel index in parallel threads
+    int in_pixel_index_x = blockIdx.x * TILE_WIDTH + threadIdx.x; 
+    int in_pixel_index_y = (blockIdx.y * TILE_WIDTH + threadIdx.y) * IMG_WIDTH;
+    int tile_pixel_index = threadIdx.y * TILE_DIM + threadIdx.x;
 
-  //int tile_index = blockIdx.x + N_BLOCKS_Y * blockIdx.y
-  int in_pixel_index = (blockIdx.y * TILE_WIDTH + threadIdx.y) * IMG_WIDTH + blockIdx.x * TILE_WIDTH + threadIdx.x; // why do access the pixel as an array instead of matrix?
-  int tile_pixel_index = threadIdx.y * TILE_DIM + threadIdx.x;
-  tiles[tile_pixel_index] = images_in[pixel_index];
+    // assign input pixel to tile pixel value
+    tile[tile_pixel_index] = images_in[in_pixel_index_x][in_pixel_index_y];
 }
 
-__device__ void calculate_maps(int *s_maps, int *cdfs, uchar *g_maps)
+__device__ void calculate_maps(int *cdf, uchar maps[TILES_COUNT][TILES_COUNT][N_BINS])
 {
-    int tile_index = blockIdx.x + N_BLOCKS_Y * blockIdx.y
-    int cdf_index = threadIdx.x + MAP_TILE_WIDTH * threadIdx.y;
-
-    if (threadIdx.x < MAP_TILE_WIDTH && threadIdx.y < MAP_TILE_WIDTH)
-    {
-        s_maps[blockIdx.x][blockIdx.y] = cdfs[tile_index][cdf_index] * NORMALIZATION_FACTOR;
-    }
-
-    // copy shared maps to global maps
-    if (threadIdx.x < MAP_TILE_WIDTH && threadIdx.y < MAP_TILE_WIDTH)
-    {
-        int g_maps_index = blockIdx.x * N_BINS + blockIdx.y * N_BINS * N_BLOCKS_X + cdf_index;
-        g_maps[g_maps_index] = s_maps[blockIdx.x][blockIdx.y][cdf_index]; 
-    }         
-}
-}
-bins_array map[N_BLOCKS_X][N_BLOCKS_Y];
-
-__device__ void calculate_cdf(int *cdfs)
-{
-    int tile_index = blockIdx.x + N_BLOCKS_Y * blockIdx.y    
-    cudaMemset(&cdfs, 0, N_BINS * sizeof(int));
-    __syncthreads();
-    prefix_sum(&cdfs, N_BINS);
+    double div_result = 0.0;
     
+    if (threadIdx.x < N_BINS)
+    {
+        div_result = (float)cdf[threadIdx.x] * NORMALIZATION_FACTOR;
+        maps[blockIdx.x][blockIdx.y][threadIdx.x] = (uchar)div_result;
+    }        
 }
 
-__device__ void create_histogram(int *histograms, uchar *tiles)
+__device__ void create_histogram(int *histograms, uchar *tile)
 {
     //We can accelerate this compute - https://classroom.udacity.com/courses/cs344/lessons/5605891d-c8bf-4e0d-8fed-a47920df5979/concepts/b42e8f5a-9145-450e-8c18-f23e091d33ef
-    //int tile_index = blockIdx.x + N_BLOCKS_Y * blockIdx.y    
     uchar pixel_value = 0;
-    cudaMemset(histograms, 0, N_BINS * sizeof(int)); //I think it is a cpu function. what will the threads do?
+
+    // initialize histogram
+    if(threadIdx.x < N_BINS)
+    {
+	    histograms[threadIdx.x] = 0;
+    }
     __syncthreads();
 
-    pixel_value = tiles[threadIdx.x + TILE_WIDTH * threadIdx.y];
+    pixel_value = tile[threadIdx.x + TILE_WIDTH * threadIdx.y];
     atomicAdd(&(histograms[pixel_value]), 1);
 }
 
@@ -89,16 +79,16 @@ __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps)
 {
     //every block allocates the shared-mem for itself
     //we need only two array for this calculation
-    __shared__ int cdfs[N_BINS];
-    __shared__ uchar tiles[TILE_WIDTH * TILE_WIDTH];
+    __shared__ int cdf[N_BINS];
+    __shared__ uchar tile[TILE_WIDTH * TILE_WIDTH];
 
-    convert_image_to_tiles(tiles, all_in)
+    convert_image_to_tiles(tile, all_in)
 
-    create_histogram(cdfs, tiles)
+    create_histogram(cdf, tile)
 
-    calculate_cdf(cdfs)
+    prefix_sum(cdf, N_BINS);
 
-    calculate_maps(cdfs, maps)
+    calculate_maps(cdf, maps)
 
     interpolate_device(all_in, all_out, maps);
 
@@ -109,9 +99,9 @@ __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps)
 struct task_serial_context
  {
     // TODO define task serial memory buffers
-    uchar *image_in;
-    uchar *image_out;
-    uchar *maps;
+    uchar image_in[IMG_WIDTH][IMG_HEIGHT];
+    uchar image_out[IMG_WIDTH][IMG_HEIGHT];
+    uchar maps[TILES_COUNT][TILES_COUNT][N_BINS];
 };
 
 /* Allocate GPU memory for a single input image and a single output image.
@@ -150,18 +140,20 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
         CUDA_CHECK( cudaMemcpy(context->image_in, &images_in[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyHostToDevice) );
         
         //   2. invoke GPU kernel on this image
-        process_image_kernel<<<BLOCK_SIZE, GRID_SIZE>>>(context->image_in, context->image_out, context->maps);
-        
+        process_image_kernel<<<BLOCK_SIZE, GRID_SIZE>>>(&(context->image_in), &(context->image_out), context->maps);
+
         //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
         CUDA_CHECK( cudaMemcpy(context->image_out, &images_out[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyDeviceToDevice) );
     }
-}
 
+}
 /* Release allocated resources for the task-serial implementation. */
 void task_serial_free(struct task_serial_context *context)
 {
     //TODO: free resources allocated in task_serial_init
-
+    free(context->image_in);
+    free(context->image_out));
+    free(context->maps));
     free(context);
 }
 
