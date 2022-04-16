@@ -1,22 +1,26 @@
 #include "ex1.h"
 
+// user defines
+#define N_BINS (256)
+#define MAP_TILE_WIDTH (16)
+#define N_BLOCKS ( (IMG_HEIGHT * IMG_WIDTH) / (TILE_WIDTH * TILE_WIDTH) )
+#define N_BLOCKS_X (IMG_WIDTH / TILE_WIDTH)
+#define N_BLOCKS_Y (IMG_HEIGHT / TILE_WIDTH)
+#define NORMALIZATION_FACTOR = ( (N_BINS - 1) / (TILE_WIDTH * TILE_WIDTH) )
+
+
+
 __device__ void prefix_sum(int arr[], int arr_size) 
 {
     int tid = TILE_WIDTH * threadIdx.y + threadIdx.x;
     int increment;
     for (int stride = 1; stride < arr_size; stride *= 2) 
     {
-        if (tid >= stride) 
-            if ( tid < arr_size) 
-            {
+        if (tid >= stride && tid < arr_size) 
                 increment = arr[tid - stride];
-            }
         __syncthreads(); 
-        if (tid >= stride) 
-            if ( tid < arr_size) 
-            {
+        if (tid >= stride && tid < arr_size) 
                 arr[tid] += increment;
-            }
         __syncthreads();
     }
     return;
@@ -116,9 +120,9 @@ struct task_serial_context *task_serial_init()
     auto context = new task_serial_context;
 
     //TODO: allocate GPU memory for a single input image, a single output image, and maps
-    CUDA_CHECK( cudaHostAlloc(context->image_in, IMG_HEIGHT * IMG_WIDTH, 0) );
-    CUDA_CHECK( cudaHostAlloc(context->image_out, IMG_HEIGHT * IMG_WIDTH, 0) );
-    CUDA_CHECK( cudaHostAlloc(context->maps, TILES_COUNT * TILES_COUNT * N_BINS, 0) );
+    CUDA_CHECK( cudaHostAlloc(&context->image_in, IMG_HEIGHT * IMG_WIDTH, 0) );
+    CUDA_CHECK( cudaHostAlloc(&context->image_out, IMG_HEIGHT * IMG_WIDTH, 0) );
+    CUDA_CHECK( cudaHostAlloc(&context->maps, TILES_COUNT * TILES_COUNT * N_BINS, 0) );
 
     return context;
 }
@@ -144,7 +148,7 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
         CUDA_CHECK( cudaMemcpy(context->image_in, &images_in[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyHostToDevice) );
         
         //   2. invoke GPU kernel on this image
-        process_image_kernel<<<BLOCK_SIZE, GRID_SIZE>>>(&(context->image_in), &(context->image_out), context->maps);
+        process_image_kernel<<<BLOCK_SIZE, GRID_SIZE>>>(&(context->image_in), &(context->image_out), context->maps); //too many threads. we need to change the code :(
 
         //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
         CUDA_CHECK( cudaMemcpy(context->image_out, &images_out[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyDeviceToDevice) );
@@ -155,9 +159,9 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
 void task_serial_free(struct task_serial_context *context)
 {
     //TODO: free resources allocated in task_serial_init
-    free(context->image_in);
-    free(context->image_out));
-    free(context->maps));
+    cudaFree(context->image_in);
+    cudaFree(context->image_out));
+    cudaFree(context->maps));
     free(context);
 }
 

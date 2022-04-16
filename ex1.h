@@ -15,13 +15,6 @@
 #define TILE_COUNT (IMG_WIDTH / TILE_WIDTH)
 #define N_IMAGES (1000)
 
-// user defines
-#define N_BINS (256)
-#define MAP_TILE_WIDTH (16)
-#define N_BLOCKS ( (IMG_HEIGHT * IMG_WIDTH) / (TILE_WIDTH * TILE_WIDTH) )
-#define N_BLOCKS_X (IMG_WIDTH / TILE_WIDTH)
-#define N_BLOCKS_Y (IMG_HEIGHT / TILE_WIDTH)
-#define NORMALIZATION_FACTOR = ( (N_BINS - 1) / (TILE_WIDTH * TILE_WIDTH) )
 
 // original typedef
 typedef unsigned char uchar;
