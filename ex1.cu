@@ -92,13 +92,13 @@ __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps)
     __shared__ int cdfs[N_BINS];
     __shared__ uchar tiles[TILE_WIDTH * TILE_WIDTH];
 
-    convert_image_to_tiles(tiles, all_in)
+    convert_image_to_tiles(tiles, all_in);
 
-    create_histogram(cdfs, tiles)
+    create_histogram(cdfs, tiles);
 
-    calculate_cdf(cdfs)
+    calculate_cdf(cdfs);
 
-    calculate_maps(cdfs, maps)
+    calculate_maps(cdfs, maps);
 
     interpolate_device(all_in, all_out, maps);
 
