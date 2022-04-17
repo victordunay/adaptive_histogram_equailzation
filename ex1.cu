@@ -6,7 +6,7 @@
 #define N_BLOCKS ( (IMG_HEIGHT * IMG_WIDTH) / (TILE_WIDTH * TILE_WIDTH) )
 #define N_BLOCKS_X (IMG_WIDTH / TILE_WIDTH)
 #define N_BLOCKS_Y (IMG_HEIGHT / TILE_WIDTH)
-#define NORMALIZATION_FACTOR = ( (N_BINS - 1) / (TILE_WIDTH * TILE_WIDTH) )
+#define NORMALIZATION_FACTOR  ( (N_BINS - 1) / (TILE_WIDTH * TILE_WIDTH) )
 #define N_THREADS_Y (16)
 
 
@@ -27,25 +27,26 @@ __device__ void prefix_sum(int arr[], int arr_size)
     return;
 }
 
-__device__ void convert_image_to_tiles(uchar *tile, uchar image_in[IMG_WIDTH][IMG_HEIGHT])
+/*
+__device__ void convert_image_to_tiles(uchar *tile, uchar *image_in)
 {   
     // calculate pixel index in parallel threads
     int in_pixel_index_x = blockIdx.x * TILE_WIDTH + threadIdx.x; 
     int in_pixel_index_y = (blockIdx.y * TILE_WIDTH + threadIdx.y) * IMG_WIDTH;
-    int tile_pixel_index = threadIdx.y * TILE_DIM + threadIdx.x;
+    int tile_pixel_index = threadIdx.y * blockDim.x + threadIdx.x;
 
     // assign input pixel to tile pixel value
-    tile[tile_pixel_index] = images_in[in_pixel_index_x][in_pixel_index_y];
-}
+    tile[tile_pixel_index] = image_in[in_pixel_index_x][in_pixel_index_y];
+}*/
 
-__device__ void calculate_maps(int *cdf, uchar maps[TILES_COUNT][TILES_COUNT][N_BINS])
+__device__ void calculate_maps(int *cdf, uchar *maps)
 {
-    double div_result = 0.0;
-    
-    if (threadIdx.x < N_BINS)
+    float div_result = 0.0f;
+    int tid = TILE_WIDTH * threadIdx.y + threadIdx.x;
+    if (tid < N_BINS)
     {
-        div_result = (float)cdf[threadIdx.x] * NORMALIZATION_FACTOR;
-        maps[blockIdx.x][blockIdx.y][threadIdx.x] = (uchar)div_result;
+        div_result = (float)(cdf[tid] * NORMALIZATION_FACTOR);
+        maps[(blockIdx.x + blockIdx.y * TILE_COUNT)*N_BINS + tid] = (uchar)div_result;
     }        
 }
 
@@ -60,7 +61,7 @@ __device__ void create_histogram(int *histograms, uchar *image)
 {
     //We can accelerate this compute - https://classroom.udacity.com/courses/cs344/lessons/5605891d-c8bf-4e0d-8fed-a47920df5979/concepts/b42e8f5a-9145-450e-8c18-f23e091d33ef
     uchar pixel_value = 0;
-    int in_pixel_index_y = blockIdx.y * TILE_WIDTH + threadIdx.y
+    int in_pixel_index_y = blockIdx.y * TILE_WIDTH + threadIdx.y;
     int in_pixel_index_x = blockIdx.x * TILE_WIDTH + threadIdx.x; 
 
     // initialize histogram
@@ -72,7 +73,7 @@ __device__ void create_histogram(int *histograms, uchar *image)
 
     for(int i = 0; i < TILE_WIDTH/N_THREADS_Y; i++ )
     {
-        pixel_value = images_in[in_pixel_index_x][in_pixel_index_y + i*N_THREADS_Y];
+        pixel_value = image[in_pixel_index_x + (in_pixel_index_y + i*N_THREADS_Y) * blockDim.x];
         atomicAdd(&(histograms[pixel_value]), 1);
     }  
 }
@@ -98,19 +99,11 @@ __device__ void interpolate_device(uchar* maps ,uchar *in_img, uchar* out_img);
  */
 __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps) 
 {
-    //every block allocates the shared-mem for itself
-    //we need only two array for this calculation
+
     __shared__ int cdf[N_BINS];
-    //__shared__ uchar tile[TILE_WIDTH * TILE_WIDTH];
-
-    //convert_image_to_tiles(tile, all_in)
-
-    create_histogram(cdf, all_in)
-
+    create_histogram(cdf, all_in);
     prefix_sum(cdf, N_BINS);
-
-    calculate_maps(cdf, maps)
-
+    calculate_maps(cdf, maps);
     interpolate_device(all_in, all_out, maps);
 
     return; 
@@ -120,9 +113,9 @@ __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps)
 struct task_serial_context
  {
     // TODO define task serial memory buffers
-    uchar image_in[IMG_WIDTH][IMG_HEIGHT];
-    uchar image_out[IMG_WIDTH][IMG_HEIGHT];
-    uchar maps[TILES_COUNT][TILES_COUNT][N_BINS];
+    uchar *image_in;
+    uchar *image_out;
+    uchar *maps;
 };
 
 /* Allocate GPU memory for a single input image and a single output image.
@@ -132,10 +125,11 @@ struct task_serial_context *task_serial_init()
 {
     auto context = new task_serial_context;
 
+    
     //TODO: allocate GPU memory for a single input image, a single output image, and maps
-    CUDA_CHECK( cudaHostAlloc(&context->image_in, IMG_HEIGHT * IMG_WIDTH, 0) );
-    CUDA_CHECK( cudaHostAlloc(&context->image_out, IMG_HEIGHT * IMG_WIDTH, 0) );
-    CUDA_CHECK( cudaHostAlloc(&context->maps, TILES_COUNT * TILES_COUNT * N_BINS, 0) );
+    CUDA_CHECK( cudaHostAlloc(&(context->image_in), IMG_WIDTH * IMG_WIDTH*sizeof(uchar),0) );
+    CUDA_CHECK( cudaHostAlloc(&(context->image_out), IMG_WIDTH * IMG_WIDTH*sizeof(uchar),0) );
+    CUDA_CHECK( cudaHostAlloc(&(context->maps), TILE_COUNT * TILE_COUNT * N_BINS*sizeof(uchar),0) );
 
     return context;
 }
@@ -158,10 +152,10 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
     for (; image_index < N_IMAGES ; ++image_index)
     {
          //   1. copy the relevant image from images_in to the GPU memory you allocated
-        CUDA_CHECK( cudaMemcpy(context->image_in, &images_in[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyHostToDevice) );
+        CUDA_CHECK( cudaMemcpy(context->image_in, &images_in[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
         
         //   2. invoke GPU kernel on this image
-        process_image_kernel<<<BLOCK_SIZE, GRID_SIZE>>>(&(context->image_in), &(context->image_out), context->maps); 
+        process_image_kernel<<<BLOCK_SIZE, GRID_SIZE>>>((context->image_in), (context->image_out), context->maps); 
 
         //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
         CUDA_CHECK( cudaMemcpy(context->image_out, &images_out[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyDeviceToDevice) );
@@ -173,8 +167,8 @@ void task_serial_free(struct task_serial_context *context)
 {
     //TODO: free resources allocated in task_serial_init
     cudaFree(context->image_in);
-    cudaFree(context->image_out));
-    cudaFree(context->maps));
+    cudaFree(context->image_out);
+    cudaFree(context->maps);
     free(context);
 }
 

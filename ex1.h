@@ -6,17 +6,16 @@
 #include <stdio.h>
 #include <time.h>
 
-// original defines
-#define IMG_HEIGHT (512)
-#define IMG_WIDTH (512)
-#define TILE_WIDTH_LOG2 (6)
-#define TILE_WIDTH (64)
+
+#define IMG_HEIGHT 512
+#define IMG_WIDTH 512
+#define TILE_WIDTH_LOG2 6
+#define TILE_WIDTH 64
 #define TILE_HALF_WIDTH (TILE_WIDTH / 2)
 #define TILE_COUNT (IMG_WIDTH / TILE_WIDTH)
-#define N_IMAGES (1000)
+#define N_IMAGES 1000
 
 
-// original typedef
 typedef unsigned char uchar;
 
 #define CUDA_CHECK(f) do {                                                                  \
