@@ -7,6 +7,7 @@
 #define N_BLOCKS_X (IMG_WIDTH / TILE_WIDTH)
 #define N_BLOCKS_Y (IMG_HEIGHT / TILE_WIDTH)
 #define NORMALIZATION_FACTOR = ( (N_BINS - 1) / (TILE_WIDTH * TILE_WIDTH) )
+#define N_THREADS_Y (16)
 
 
 
@@ -48,10 +49,19 @@ __device__ void calculate_maps(int *cdf, uchar maps[TILES_COUNT][TILES_COUNT][N_
     }        
 }
 
-__device__ void create_histogram(int *histograms, uchar *tile)
+/**
+ * @brief Create a histogram from the fitting tile of image given
+ * 
+ * @param histograms  the histogram arry to fill
+ * @param image the image to make the histagram from 
+ * @return __device__ 
+ */
+__device__ void create_histogram(int *histograms, uchar *image)
 {
     //We can accelerate this compute - https://classroom.udacity.com/courses/cs344/lessons/5605891d-c8bf-4e0d-8fed-a47920df5979/concepts/b42e8f5a-9145-450e-8c18-f23e091d33ef
     uchar pixel_value = 0;
+    int in_pixel_index_y = blockIdx.y * TILE_WIDTH + threadIdx.y
+    int in_pixel_index_x = blockIdx.x * TILE_WIDTH + threadIdx.x; 
 
     // initialize histogram
     if(threadIdx.x < N_BINS)
@@ -60,8 +70,11 @@ __device__ void create_histogram(int *histograms, uchar *tile)
     }
     __syncthreads();
 
-    pixel_value = tile[threadIdx.x + TILE_WIDTH * threadIdx.y];
-    atomicAdd(&(histograms[pixel_value]), 1);
+    for(int i = 0; i < TILE_WIDTH/N_THREADS_Y; i++ )
+    {
+        pixel_value = images_in[in_pixel_index_x][in_pixel_index_y + i*N_THREADS_Y];
+        atomicAdd(&(histograms[pixel_value]), 1);
+    }  
 }
 
 /**
@@ -88,11 +101,11 @@ __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps)
     //every block allocates the shared-mem for itself
     //we need only two array for this calculation
     __shared__ int cdf[N_BINS];
-    __shared__ uchar tile[TILE_WIDTH * TILE_WIDTH];
+    //__shared__ uchar tile[TILE_WIDTH * TILE_WIDTH];
 
-    convert_image_to_tiles(tile, all_in)
+    //convert_image_to_tiles(tile, all_in)
 
-    create_histogram(cdf, tile)
+    create_histogram(cdf, all_in)
 
     prefix_sum(cdf, N_BINS);
 
@@ -137,8 +150,8 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
     //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
     
     
-    dim3 BLOCK_SIZE(N_BLOCKS_X, N_BLOCKS_Y);
-    dim3 GRID_SIZE(TILE_WIDTH, TILE_WIDTH);
+    dim3 BLOCK_SIZE(N_BLOCKS_X, N_BLOCKS_Y, 1);
+    dim3 GRID_SIZE(TILE_WIDTH, N_THREADS_Y , 1);
 
     int image_index = 0;
 
@@ -148,7 +161,7 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
         CUDA_CHECK( cudaMemcpy(context->image_in, &images_in[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyHostToDevice) );
         
         //   2. invoke GPU kernel on this image
-        process_image_kernel<<<BLOCK_SIZE, GRID_SIZE>>>(&(context->image_in), &(context->image_out), context->maps); //too many threads. we need to change the code :(
+        process_image_kernel<<<BLOCK_SIZE, GRID_SIZE>>>(&(context->image_in), &(context->image_out), context->maps); 
 
         //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
         CUDA_CHECK( cudaMemcpy(context->image_out, &images_out[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT * sizeof(uchar), cudaMemcpyDeviceToDevice) );
