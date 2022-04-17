@@ -25,13 +25,6 @@
      int in_pixel_index_y = blockIdx.y * TILE_WIDTH + threadIdx.y;
      int in_pixel_index_x = blockIdx.x * TILE_WIDTH + threadIdx.x; 
  
-     // initialize histogram
-     if(blockIdx.y * blockDim.x + threadIdx.x < N_BINS)
-     {
-         histograms[threadIdx.x] = 0;
-     }
-     __syncthreads();
- 
      for(int i = 0; i < TILE_WIDTH/N_THREADS_Y; i++ )
      {
          pixel_value = image[in_pixel_index_x + (in_pixel_index_y + i*N_THREADS_Y) * blockDim.x];
@@ -63,7 +56,7 @@ __device__ void calculate_maps(int *cdf, uchar *maps)
     {
         div_result = (uchar)(cdf[tid] * 255.0/(64*64));
         cdf[tid] = (int) div_result;
-        maps[(blockIdx.x + blockIdx.y * TILE_COUNT)*N_BINS + tid] =div_result;
+        maps[(blockIdx.x + blockIdx.y * TILE_COUNT)*N_BINS + tid] = div_result;
     }   
     __syncthreads();     
 }
@@ -91,12 +84,19 @@ __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps)
 {
 
     __shared__ int cdf[N_BINS];
+    int tid = threadIdx.y * blockDim.x + threadIdx.x;
+    // initialize cdf
+    if(tid < N_BINS)
+    {
+        cdf[tid] = 0;
+    }
+    __syncthreads();
     create_histogram(cdf, all_in);
     __syncthreads();
     prefix_sum(cdf, N_BINS);
     calculate_maps(cdf, maps);
     interpolate_device(maps,all_in, all_out);
-
+    __syncthreads();
     return; 
 }
 
