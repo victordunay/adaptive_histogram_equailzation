@@ -20,16 +20,16 @@
  */
  __device__ void create_histogram(int *histograms, uchar *image)
  {
-     //We can accelerate this compute - https://classroom.udacity.com/courses/cs344/lessons/5605891d-c8bf-4e0d-8fed-a47920df5979/concepts/b42e8f5a-9145-450e-8c18-f23e091d33ef
-     uchar pixel_value = 0;
-     int in_pixel_index_y = blockIdx.y * TILE_WIDTH + threadIdx.y;
-     int in_pixel_index_x = blockIdx.x * TILE_WIDTH + threadIdx.x; 
- 
-     for(int i = 0; i < TILE_WIDTH/N_THREADS_Y; i++ )
-     {
-         pixel_value = image[in_pixel_index_x + (in_pixel_index_y + i*N_THREADS_Y) * blockDim.x];
-         atomicAdd(&(histograms[pixel_value]), 1);
-     }  
+    //We can accelerate this compute - https://classroom.udacity.com/courses/cs344/lessons/5605891d-c8bf-4e0d-8fed-a47920df5979/concepts/b42e8f5a-9145-450e-8c18-f23e091d33ef
+    uchar pixel_value = 0;
+    int in_pixel_index_y = blockIdx.y * TILE_WIDTH + threadIdx.y;
+    int in_pixel_index_x = blockIdx.x * TILE_WIDTH + threadIdx.x; 
+
+    for(int i = 0; i < TILE_WIDTH/N_THREADS_Y; i++ )
+    {
+        pixel_value = image[in_pixel_index_x + (in_pixel_index_y + i*N_THREADS_Y) * IMG_WIDTH];
+        atomicAdd(&(histograms[pixel_value]), 1);
+    }  
  }
 
 __device__ void prefix_sum(int arr[], int arr_size) 
