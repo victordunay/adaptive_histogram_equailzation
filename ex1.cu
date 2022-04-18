@@ -18,18 +18,24 @@
  * @param image the image to make the histagram from 
  * @return __device__ 
  */
- __device__ void create_histogram(int *histograms, uchar *image)
+ __device__ void create_histogram(int t_row, int t_col ,int *histograms, uchar *image)
  {
     //We can accelerate this compute - https://classroom.udacity.com/courses/cs344/lessons/5605891d-c8bf-4e0d-8fed-a47920df5979/concepts/b42e8f5a-9145-450e-8c18-f23e091d33ef
-    uchar pixel_value = 0;
-    int in_pixel_index_y = blockIdx.y * TILE_WIDTH + threadIdx.y;
-    int in_pixel_index_x = blockIdx.x * TILE_WIDTH + threadIdx.x; 
+    int tid = threadIdx.y * blockDim.x + threadIdx.x;
+    // initialize cdf
+    if(tid < N_BINS)
+    {
+        histograms[tid] = 0;
+    }
 
+    int in_pixel_index_y = t_row * TILE_WIDTH + threadIdx.y;
+    int in_pixel_index_x = t_col * TILE_WIDTH + threadIdx.x; 
+    uchar pixel_value = 0;
     for(int i = 0; i < TILE_WIDTH/N_THREADS_Y; i++ )
     {
         pixel_value = image[in_pixel_index_x + (in_pixel_index_y + i*N_THREADS_Y) * IMG_WIDTH];
         atomicAdd(&(histograms[pixel_value]), 1);
-    }  
+    } 
  }
 
 __device__ void prefix_sum(int arr[], int arr_size) 
@@ -48,15 +54,15 @@ __device__ void prefix_sum(int arr[], int arr_size)
     return;
 }
 
-__device__ void calculate_maps(int *cdf, uchar *maps)
+__device__ void calculate_maps(int t_row, int t_col, int *cdf, uchar *maps)
 {
     uchar div_result = (uchar) 0;
     int tid = blockDim.x * threadIdx.y + threadIdx.x;
     if (tid < N_BINS)
     {
-        div_result = (uchar)(cdf[tid] * 255.0/(64*64));
+        div_result = (uchar)(cdf[tid] * 255.0/(TILE_WIDTH*TILE_WIDTH));
         cdf[tid] = (int) div_result;
-        maps[(blockIdx.x + blockIdx.y * TILE_COUNT)*N_BINS + tid] = div_result;
+        maps[(t_col + t_row * TILE_COUNT)*N_BINS + tid] = div_result;
     }   
     __syncthreads();     
 }
@@ -84,19 +90,18 @@ __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps)
 {
 
     __shared__ int cdf[N_BINS];
-    int tid = threadIdx.y * blockDim.x + threadIdx.x;
-    // initialize cdf
-    if(tid < N_BINS)
+    for(int t_row = 0; t_row< TILE_COUNT; ++t_row)
     {
-        cdf[tid] = 0;
+        for(int t_col = 0; t_col< TILE_COUNT; ++t_col)
+        {
+            create_histogram(t_row, t_col, cdf, all_in);
+            __syncthreads();
+            prefix_sum(cdf, N_BINS);
+            calculate_maps(t_row, t_col,cdf, maps);
+            __syncthreads();
+        }
     }
-    __syncthreads();
-    create_histogram(cdf, all_in);
-    __syncthreads();
-    prefix_sum(cdf, N_BINS);
-    calculate_maps(cdf, maps);
     interpolate_device(maps,all_in, all_out);
-    __syncthreads();
     return; 
 }
 
@@ -135,22 +140,26 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
     //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
     
     
-    dim3 BLOCK_SIZE(N_BLOCKS_X, N_BLOCKS_Y, 1);
+    //dim3 BLOCK_SIZE(TILE_COUNT, TILE_COUNT, 1);
     dim3 GRID_SIZE(TILE_WIDTH, N_THREADS_Y , 1);
 
     int image_index = 0;
 
     for (; image_index < N_IMAGES ; ++image_index)
     {
+        cudaDeviceSynchronize();
          //   1. copy the relevant image from images_in to the GPU memory you allocated
         CUDA_CHECK( cudaMemcpy(context->image_in, &images_in[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
-        
+        cudaDeviceSynchronize();
         //   2. invoke GPU kernel on this image
-        process_image_kernel<<<BLOCK_SIZE, GRID_SIZE>>>((context->image_in), (context->image_out), context->maps); 
+        process_image_kernel<<<1, GRID_SIZE>>>((context->image_in), (context->image_out), context->maps); 
+        cudaDeviceSynchronize();
 
         //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
         CUDA_CHECK( cudaMemcpy(&images_out[image_index * IMG_WIDTH * IMG_HEIGHT],context->image_out, IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
+        cudaDeviceSynchronize();
     }
+
 
 }
 /* Release allocated resources for the task-serial implementation. */
