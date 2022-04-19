@@ -28,12 +28,14 @@
         histograms[tid] = 0;
     }
 
-    int in_pixel_index_y = t_row * TILE_WIDTH + threadIdx.y;
-    int in_pixel_index_x = t_col * TILE_WIDTH + threadIdx.x; 
+    int image_start = IMG_WIDTH * IMG_HEIGHT * blockIdx.x;
+    int row_base_offset = (t_row * TILE_WIDTH + threadIdx.y) * IMG_WIDTH ;
+    int row_interval = N_THREADS_Y * IMG_WIDTH;
+    int col_offset = t_col * TILE_WIDTH + threadIdx.x; 
     uchar pixel_value = 0;
     for(int i = 0; i < TILE_WIDTH/N_THREADS_Y; i++ )
     {
-        pixel_value = image[in_pixel_index_x + (in_pixel_index_y + i*N_THREADS_Y) * IMG_WIDTH];
+        pixel_value = image[image_start + row_base_offset + (i * row_interval) + col_offset];
         atomicAdd(&(histograms[pixel_value]), 1);
     } 
  }
@@ -123,9 +125,9 @@ struct task_serial_context *task_serial_init()
 
     
     //TODO: allocate GPU memory for a single input image, a single output image, and maps
-    CUDA_CHECK( cudaHostAlloc(&(context->image_in), IMG_WIDTH * IMG_WIDTH*sizeof(uchar),0) );
-    CUDA_CHECK( cudaHostAlloc(&(context->image_out), IMG_WIDTH * IMG_WIDTH*sizeof(uchar),0) );
-    CUDA_CHECK( cudaHostAlloc(&(context->maps), TILE_COUNT * TILE_COUNT * N_BINS*sizeof(uchar),0) );
+    CUDA_CHECK( cudaHostAlloc(&(context->image_in), IMG_WIDTH * IMG_WIDTH,0) );
+    CUDA_CHECK( cudaHostAlloc(&(context->image_out), IMG_WIDTH * IMG_WIDTH,0) );
+    CUDA_CHECK( cudaHostAlloc(&(context->maps), TILE_COUNT * TILE_COUNT * N_BINS,0) );
 
     return context;
 }
@@ -139,8 +141,6 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
     //   2. invoke GPU kernel on this image
     //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
     
-    
-    //dim3 BLOCK_SIZE(TILE_COUNT, TILE_COUNT, 1);
     dim3 GRID_SIZE(TILE_WIDTH, N_THREADS_Y , 1);
 
     int image_index = 0;
@@ -170,9 +170,18 @@ void task_serial_free(struct task_serial_context *context)
     free(context);
 }
 
+
+
+/****************************************************************************************/
+/*                                      bulk                                            */
+/****************************************************************************************/
+
 /* Bulk GPU context struct with necessary CPU / GPU pointers to process all the images */
 struct gpu_bulk_context {
     // TODO define bulk-GPU memory buffers
+    uchar *image_in;
+    uchar *image_out;
+    uchar *maps;
 };
 
 /* Allocate GPU memory for all the input images, output images, and maps.
@@ -183,6 +192,9 @@ struct gpu_bulk_context *gpu_bulk_init()
     auto context = new gpu_bulk_context;
 
     //TODO: allocate GPU memory for all the input images, output images, and maps
+    CUDA_CHECK( cudaHostAlloc(&(context->image_in),N_IMAGES * IMG_WIDTH * IMG_WIDTH ,0) );
+    CUDA_CHECK( cudaHostAlloc(&(context->image_out),N_IMAGES * IMG_WIDTH * IMG_WIDTH,0) );
+    CUDA_CHECK( cudaHostAlloc(&(context->maps),N_IMAGES * TILE_COUNT * TILE_COUNT * N_BINS,0) );
 
     return context;
 }
@@ -192,14 +204,24 @@ struct gpu_bulk_context *gpu_bulk_init()
 void gpu_bulk_process(struct gpu_bulk_context *context, uchar *images_in, uchar *images_out)
 {
     //TODO: copy all input images from images_in to the GPU memory you allocated
+    dim3 GRID_SIZE(TILE_WIDTH, N_THREADS_Y , 1);
+       
+    CUDA_CHECK( cudaMemcpy(context->image_in, images_in,N_IMAGES * IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
+
     //TODO: invoke a kernel with N_IMAGES threadblocks, each working on a different image
+    process_image_kernel<<<N_IMAGES, GRID_SIZE>>>((context->image_in), (context->image_out), context->maps); 
+    cudaDeviceSynchronize();
+
     //TODO: copy output images from GPU memory to images_out
+    CUDA_CHECK( cudaMemcpy(images_out,context->image_out,N_IMAGES * IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
 }
 
 /* Release allocated resources for the bulk GPU implementation. */
 void gpu_bulk_free(struct gpu_bulk_context *context)
 {
     //TODO: free resources allocated in gpu_bulk_init
-
+    cudaFree(context->image_in);
+    cudaFree(context->image_out);
+    cudaFree(context->maps);
     free(context);
 }
