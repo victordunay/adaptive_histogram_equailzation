@@ -18,7 +18,7 @@
  * @param image the image to make the histagram from 
  * @return __device__ 
  */
- __device__ void create_histogram(int t_row, int t_col ,int *histograms, uchar *image)
+ __device__ void create_histogram(int image_start, int t_row, int t_col ,int *histograms, uchar *image)
  {
     //We can accelerate this compute - https://classroom.udacity.com/courses/cs344/lessons/5605891d-c8bf-4e0d-8fed-a47920df5979/concepts/b42e8f5a-9145-450e-8c18-f23e091d33ef
     int tid = threadIdx.y * blockDim.x + threadIdx.x;
@@ -28,7 +28,6 @@
         histograms[tid] = 0;
     }
 
-    int image_start = IMG_WIDTH * IMG_HEIGHT * blockIdx.x;
     int row_base_offset = (t_row * TILE_WIDTH + threadIdx.y) * IMG_WIDTH ;
     int row_interval = N_THREADS_Y * IMG_WIDTH;
     int col_offset = t_col * TILE_WIDTH + threadIdx.x; 
@@ -56,10 +55,9 @@ __device__ void prefix_sum(int arr[], int arr_size)
     return;
 }
 
-__device__ void calculate_maps(int t_row, int t_col, int *cdf, uchar *maps)
+__device__ void calculate_maps(int map_start, int t_row, int t_col, int *cdf, uchar *maps)
 {
     uchar div_result = (uchar) 0;
-    int map_start = TILE_COUNT * TILE_COUNT * N_BINS * blockIdx.x;
     int tid = blockDim.x * threadIdx.y + threadIdx.x;
     if (tid < N_BINS)
     {
@@ -92,19 +90,20 @@ __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps)
 {
 
     __shared__ int cdf[N_BINS];
-    
+    int image_start = IMG_WIDTH * IMG_HEIGHT * blockIdx.x;
+    int map_start = TILE_COUNT * TILE_COUNT * N_BINS * blockIdx.x;
     for(int t_row = 0; t_row< TILE_COUNT; ++t_row)
     {
         for(int t_col = 0; t_col< TILE_COUNT; ++t_col)
         {
-            create_histogram(t_row, t_col, cdf, all_in);
+            create_histogram(image_start,t_row, t_col, cdf, all_in);
             __syncthreads();
             prefix_sum(cdf, N_BINS);
-            calculate_maps(t_row, t_col,cdf, maps); 
+            calculate_maps(map_start, t_row, t_col,cdf, maps); 
             __syncthreads();
         }
     }
-    interpolate_device(&maps[TILE_COUNT * TILE_COUNT * N_BINS * blockIdx.x],&all_in[IMG_WIDTH * IMG_HEIGHT * blockIdx.x], &all_out[IMG_WIDTH * IMG_HEIGHT * blockIdx.x]);
+    interpolate_device(&maps[map_start],&all_in[image_start], &all_out[image_start]);
     return; 
 }
 
