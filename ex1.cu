@@ -97,7 +97,7 @@ __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps)
             create_histogram(t_row, t_col, cdf, all_in);
             __syncthreads();
             prefix_sum(cdf, N_BINS);
-            calculate_maps(t_row, t_col,cdf, maps);
+            calculate_maps(t_row, t_col,cdf, maps); 
             __syncthreads();
         }
     }
@@ -147,17 +147,15 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
 
     for (; image_index < N_IMAGES ; ++image_index)
     {
-        cudaDeviceSynchronize();
          //   1. copy the relevant image from images_in to the GPU memory you allocated
         CUDA_CHECK( cudaMemcpy(context->image_in, &images_in[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
-        cudaDeviceSynchronize();
+
         //   2. invoke GPU kernel on this image
         process_image_kernel<<<1, GRID_SIZE>>>((context->image_in), (context->image_out), context->maps); 
         cudaDeviceSynchronize();
 
         //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
         CUDA_CHECK( cudaMemcpy(&images_out[image_index * IMG_WIDTH * IMG_HEIGHT],context->image_out, IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
-        cudaDeviceSynchronize();
     }
 
 
