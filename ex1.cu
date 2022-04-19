@@ -59,12 +59,12 @@ __device__ void prefix_sum(int arr[], int arr_size)
 __device__ void calculate_maps(int t_row, int t_col, int *cdf, uchar *maps)
 {
     uchar div_result = (uchar) 0;
+    int map_start = TILE_COUNT * TILE_COUNT * N_BINS * blockIdx.x;
     int tid = blockDim.x * threadIdx.y + threadIdx.x;
     if (tid < N_BINS)
     {
         div_result = (uchar)(cdf[tid] * 255.0/(TILE_WIDTH*TILE_WIDTH));
-        cdf[tid] = (int) div_result;
-        maps[(t_col + t_row * TILE_COUNT)*N_BINS + tid] = div_result;
+        maps[map_start + (t_col + t_row * TILE_COUNT)*N_BINS + tid] = div_result;
     }   
     __syncthreads();     
 }
@@ -92,6 +92,7 @@ __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps)
 {
 
     __shared__ int cdf[N_BINS];
+    
     for(int t_row = 0; t_row< TILE_COUNT; ++t_row)
     {
         for(int t_col = 0; t_col< TILE_COUNT; ++t_col)
@@ -103,7 +104,7 @@ __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps)
             __syncthreads();
         }
     }
-    interpolate_device(maps,all_in, all_out);
+    interpolate_device(&maps[TILE_COUNT * TILE_COUNT * N_BINS * blockIdx.x],&all_in[IMG_WIDTH * IMG_HEIGHT * blockIdx.x], &all_out[IMG_WIDTH * IMG_HEIGHT * blockIdx.x]);
     return; 
 }
 
