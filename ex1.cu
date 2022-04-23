@@ -12,33 +12,55 @@
 
 
 /**
- * @brief Create a histogram from the fitting tile of image given
+ * @brief Create a histogram from the fitting tile of image given. Assumes that the kernel runs with more than 256 *        threads
  * 
  * @param histograms  the histogram arry to fill
  * @param image the image to make the histagram from 
  * @return __device__ 
  */
- __device__ void create_histogram(int image_start, int t_row, int t_col ,int *histograms, uchar *image)
+
+ /**
+  * @brief Create a histogram of the tile pixels. Assumes that the kernel runs with more than 256 threads
+  * 
+  * @param image_start The start index of the image the block processing
+  * @param t_row  The tile's row
+  * @param t_col  The tile's column
+  * @param histogram - the histogram of the tile
+  * @param image - The images array to process.
+  */
+ __device__ void create_histogram(int image_start, int t_row, int t_col ,int *histogram, uchar *image)
  {
-    //We can accelerate this compute - https://classroom.udacity.com/courses/cs344/lessons/5605891d-c8bf-4e0d-8fed-a47920df5979/concepts/b42e8f5a-9145-450e-8c18-f23e091d33ef
+    
     int tid = threadIdx.y * blockDim.x + threadIdx.x;
-    // initialize cdf
+    // initialize histogram
     if(tid < N_BINS)
     {
-        histograms[tid] = 0;
+        histogram[tid] = 0;
     }
 
+    //calculates the pixel index that assigned to the thread 
     int row_base_offset = (t_row * TILE_WIDTH + threadIdx.y) * IMG_WIDTH ;
     int row_interval = N_THREADS_Y * IMG_WIDTH;
     int col_offset = t_col * TILE_WIDTH + threadIdx.x; 
+
     uchar pixel_value = 0;
-    for(int i = 0; i < TILE_WIDTH/N_THREADS_Y; i++ )
+
+    //The block has 16 rows, Therefore, it runs 4 times so every warp run on 4 different rows
+    for(int i = 0; i < TILE_WIDTH/N_THREADS_Y; i++ ) 
     {
         pixel_value = image[image_start + row_base_offset + (i * row_interval) + col_offset];
-        atomicAdd(&(histograms[pixel_value]), 1);
+        atomicAdd(&(histogram[pixel_value]), 1);
     } 
  }
 
+
+ /**
+  * @brief Calculates inclusive prefix sum of the given array. Saves the sum in the given array.
+  *      Assumes n_threads > arr_size
+  * 
+  * @param arr The given array 
+  * @param arr_size The size of the array
+  */
 __device__ void prefix_sum(int arr[], int arr_size) 
 {
     int tid = blockDim.x * threadIdx.y + threadIdx.x;
@@ -55,6 +77,16 @@ __device__ void prefix_sum(int arr[], int arr_size)
     return;
 }
 
+/**
+ * @brief Calculates a map from the cdf and saves it in the given index in the 'maps' array.
+ * 
+ * @param map_start The start index in the 'maps' array of the current image's map
+ * @param t_row The tile's row
+ * @param t_col The tile's column
+ * @param cdf The cdf of the tile.
+ * @param maps Array of the maps of all images
+ * @return __device__ 
+ */
 __device__ void calculate_maps(int map_start, int t_row, int t_col, int *cdf, uchar *maps)
 {
     uchar div_result = (uchar) 0;
@@ -78,11 +110,11 @@ __device__ void calculate_maps(int map_start, int t_row, int t_col, int *cdf, uc
 __device__ void interpolate_device(uchar* maps ,uchar *in_img, uchar* out_img);
 
 /**
- * @brief takes an image given in all_in, and return the processed image in all_out 
+ * @brief process an image which assigned to the block index. It takes an image given in all_in, and return the processed image in all_out respectively.
  * 
- * @param all_in single input image, in global memory.
- * @param all_out single output image, in global memory.
- * @param maps 3D array ([TILES_COUNT][TILES_COUNT][256]) of    
+ * @param all_in Array of input images, in global memory ([N_IMAGES][IMG_HEIGHT][IMG_WIDTH])
+ * @param all_out Array of output images, in global memory ([N_IMAGES][IMG_HEIGHT][IMG_WIDTH])
+ * @param maps 4D array ([N_IMAGES][TILES_COUNT][TILES_COUNT][256]) of    
  *             the tiles’ maps, in global memory.
  * @return __global__ 
  */
@@ -152,7 +184,6 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
 
         //   2. invoke GPU kernel on this image
         process_image_kernel<<<1, GRID_SIZE>>>((context->image_in), (context->image_out), context->maps); 
-        cudaDeviceSynchronize();
 
         //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
         CUDA_CHECK( cudaMemcpy(&images_out[image_index * IMG_WIDTH * IMG_HEIGHT],context->image_out, IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
@@ -173,7 +204,7 @@ void task_serial_free(struct task_serial_context *context)
 
 
 /****************************************************************************************/
-/*                                      bulk                                            */
+/*                                      Bulk                                            */
 /****************************************************************************************/
 
 /* Bulk GPU context struct with necessary CPU / GPU pointers to process all the images */
@@ -210,7 +241,6 @@ void gpu_bulk_process(struct gpu_bulk_context *context, uchar *images_in, uchar 
 
     //TODO: invoke a kernel with N_IMAGES threadblocks, each working on a different image
     process_image_kernel<<<N_IMAGES, GRID_SIZE>>>((context->image_in), (context->image_out), context->maps); 
-    cudaDeviceSynchronize();
 
     //TODO: copy output images from GPU memory to images_out
     CUDA_CHECK( cudaMemcpy(images_out,context->image_out,N_IMAGES * IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
