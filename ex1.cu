@@ -9,15 +9,10 @@
 #define N_BLOCKS_Y (IMG_HEIGHT / TILE_WIDTH)
 #define NORMALIZATION_FACTOR  ( (N_BINS - 1) / (TILE_WIDTH * TILE_WIDTH) )
 #define N_THREADS_Y (16)
-
-
-/**
- * @brief Create a histogram from the fitting tile of image given. Assumes that the kernel runs with more than 256 *        threads
- * 
- * @param histograms  the histogram arry to fill
- * @param image the image to make the histagram from 
- * @return __device__ 
- */
+#define N_THREADS_X (TILE_WIDTH)
+#define N_THREADS_Z (1)
+#define N_TB_SERIAL (1)
+#define N_TB_BULK (N_IMAGES)
 
  /**
   * @brief Create a histogram of the tile pixels. Assumes that the kernel runs with more than 256 threads
@@ -30,8 +25,8 @@
   */
  __device__ void create_histogram(int image_start, int t_row, int t_col ,int *histogram, uchar *image)
  {
-    
     int tid = threadIdx.y * blockDim.x + threadIdx.x;
+
     // initialize histogram
     if(tid < N_BINS)
     {
@@ -53,7 +48,6 @@
     } 
  }
 
-
  /**
   * @brief Calculates inclusive prefix sum of the given array. Saves the sum in the given array.
   *      Assumes n_threads > arr_size
@@ -64,7 +58,8 @@
 __device__ void prefix_sum(int arr[], int arr_size) 
 {
     int tid = blockDim.x * threadIdx.y + threadIdx.x;
-    int increment;
+    int increment = 0;
+
     for (int stride = 1; stride < arr_size; stride *= 2) 
     {
         if (tid >= stride && tid < arr_size) 
@@ -89,14 +84,14 @@ __device__ void prefix_sum(int arr[], int arr_size)
  */
 __device__ void calculate_maps(int map_start, int t_row, int t_col, int *cdf, uchar *maps)
 {
-    uchar div_result = (uchar) 0;
+    uchar div_result = 0;
     int tid = blockDim.x * threadIdx.y + threadIdx.x;
+
     if (tid < N_BINS)
     {
-        div_result = (uchar)(cdf[tid] * 255.0/(TILE_WIDTH*TILE_WIDTH));
-        maps[map_start + (t_col + t_row * TILE_COUNT)*N_BINS + tid] = div_result;
+        div_result = (uchar)( cdf[tid] * 255.0 / ( TILE_WIDTH * TILE_WIDTH ) );
+        maps[map_start + (t_col + t_row * TILE_COUNT) * N_BINS + tid] = div_result;
     }   
-    __syncthreads();     
 }
 
 /**
@@ -120,29 +115,40 @@ __device__ void interpolate_device(uchar* maps ,uchar *in_img, uchar* out_img);
  */
 __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps) 
 {
-
+    // the cumulative distribution function is calculated in place . 
+    // thus the cdf shared memory is also used for histogram result.
     __shared__ int cdf[N_BINS];
+
+    // indicates the first pixel index of the blockIdx.x's image
     int image_start = IMG_WIDTH * IMG_HEIGHT * blockIdx.x;
+
+    // indicates the first map index of the blockIdx.x's image
     int map_start = TILE_COUNT * TILE_COUNT * N_BINS * blockIdx.x;
-    for(int t_row = 0; t_row< TILE_COUNT; ++t_row)
+
+    for(int t_row = 0; t_row < TILE_COUNT; ++t_row)
     {
         for(int t_col = 0; t_col< TILE_COUNT; ++t_col)
         {
-            create_histogram(image_start,t_row, t_col, cdf, all_in);
+            create_histogram(image_start, t_row, t_col, cdf, all_in);
+
             __syncthreads();
+            // update cdf content from histogram to cumulative distribution function
             prefix_sum(cdf, N_BINS);
-            calculate_maps(map_start, t_row, t_col,cdf, maps); 
-            __syncthreads();
+
+            calculate_maps(map_start, t_row, t_col, cdf, maps); 
+
+           __syncthreads();
         }
     }
-    interpolate_device(&maps[map_start],&all_in[image_start], &all_out[image_start]);
+    // perform pixel correction
+    interpolate_device(maps + map_start, all_in + image_start, all_out + image_start);
+
     return; 
 }
 
 /* Task serial context struct with necessary CPU / GPU pointers to process a single image */
 struct task_serial_context
  {
-    // TODO define task serial memory buffers
     uchar *image_in;
     uchar *image_out;
     uchar *maps;
@@ -155,8 +161,7 @@ struct task_serial_context *task_serial_init()
 {
     auto context = new task_serial_context;
 
-    
-    //TODO: allocate GPU memory for a single input image, a single output image, and maps
+    // allocate GPU memory for a single input image, a single output image, and maps
     CUDA_CHECK( cudaHostAlloc(&(context->image_in), IMG_WIDTH * IMG_WIDTH,0) );
     CUDA_CHECK( cudaHostAlloc(&(context->image_out), IMG_WIDTH * IMG_WIDTH,0) );
     CUDA_CHECK( cudaHostAlloc(&(context->maps), TILE_COUNT * TILE_COUNT * N_BINS,0) );
@@ -168,12 +173,12 @@ struct task_serial_context *task_serial_init()
  * provided output host array */
 void task_serial_process(struct task_serial_context *context, uchar *images_in, uchar *images_out)
 {
-    //TODO: in a for loop:
+    //   in a for loop:
     //   1. copy the relevant image from images_in to the GPU memory you allocated
     //   2. invoke GPU kernel on this image
     //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
     
-    dim3 GRID_SIZE(TILE_WIDTH, N_THREADS_Y , 1);
+    dim3 GRID_SIZE(N_THREADS_X, N_THREADS_Y , N_THREADS_Z);
 
     int image_index = 0;
 
@@ -183,13 +188,11 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
         CUDA_CHECK( cudaMemcpy(context->image_in, &images_in[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
 
         //   2. invoke GPU kernel on this image
-        process_image_kernel<<<1, GRID_SIZE>>>((context->image_in), (context->image_out), context->maps); 
+        process_image_kernel<<<N_TB_SERIAL, GRID_SIZE>>>((context->image_in), (context->image_out), context->maps); 
 
         //   3. copy output from GPU memory to relevant location in images_out_gpu_serial
         CUDA_CHECK( cudaMemcpy(&images_out[image_index * IMG_WIDTH * IMG_HEIGHT],context->image_out, IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
     }
-
-
 }
 /* Release allocated resources for the task-serial implementation. */
 void task_serial_free(struct task_serial_context *context)
@@ -200,9 +203,6 @@ void task_serial_free(struct task_serial_context *context)
     cudaFree(context->maps);
     free(context);
 }
-
-
-
 /****************************************************************************************/
 /*                                      Bulk                                            */
 /****************************************************************************************/
@@ -235,12 +235,12 @@ struct gpu_bulk_context *gpu_bulk_init()
 void gpu_bulk_process(struct gpu_bulk_context *context, uchar *images_in, uchar *images_out)
 {
     //TODO: copy all input images from images_in to the GPU memory you allocated
-    dim3 GRID_SIZE(TILE_WIDTH, N_THREADS_Y , 1);
+    dim3 GRID_SIZE(N_THREADS_X, N_THREADS_Y , N_THREADS_Z);
        
     CUDA_CHECK( cudaMemcpy(context->image_in, images_in,N_IMAGES * IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
 
     //TODO: invoke a kernel with N_IMAGES threadblocks, each working on a different image
-    process_image_kernel<<<N_IMAGES, GRID_SIZE>>>((context->image_in), (context->image_out), context->maps); 
+    process_image_kernel<<<N_TB_BULK, GRID_SIZE>>>((context->image_in), (context->image_out), context->maps); 
 
     //TODO: copy output images from GPU memory to images_out
     CUDA_CHECK( cudaMemcpy(images_out,context->image_out,N_IMAGES * IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
