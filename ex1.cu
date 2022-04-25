@@ -1,5 +1,4 @@
 #include "ex1.h"
-#include "stdlib.h"
 
 // user defines
 #define N_BINS (256)
@@ -110,8 +109,7 @@ __device__ void interpolate_device(uchar* maps ,uchar *in_img, uchar* out_img);
  * @param all_in Array of input images, in global memory ([N_IMAGES][IMG_HEIGHT][IMG_WIDTH])
  * @param all_out Array of output images, in global memory ([N_IMAGES][IMG_HEIGHT][IMG_WIDTH])
  * @param maps 4D array ([N_IMAGES][TILES_COUNT][TILES_COUNT][256]) of    
- *             the tiles’ maps, in global memory.
- * @return __global__ 
+ *             the tiles’ maps, in global memory. 
  */
 __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps) 
 {
