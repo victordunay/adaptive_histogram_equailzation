@@ -112,7 +112,7 @@ __device__ void interpolate_device(uchar* maps ,uchar *in_img, uchar* out_img);
  *             the tiles’ maps, in global memory. 
  */
 __global__ void process_image_kernel(uchar *all_in, uchar *all_out, uchar *maps) 
-{
+{ 
     // the cumulative distribution function is calculated in place . 
     // thus the cdf shared memory is also used for histogram result.
     __shared__ int cdf[N_BINS];
@@ -180,7 +180,7 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
 
     int image_index = 0;
 
-    for (; image_index < N_IMAGES ; ++image_index)
+    for (; image_index < N_IMAGES ; ++image_index) 
     {
          //   1. copy the relevant image from images_in to the GPU memory you allocated
         CUDA_CHECK( cudaMemcpy(context->image_in, &images_in[image_index * IMG_WIDTH * IMG_HEIGHT], IMG_WIDTH * IMG_HEIGHT, cudaMemcpyDeviceToDevice) );
@@ -196,9 +196,9 @@ void task_serial_process(struct task_serial_context *context, uchar *images_in, 
 void task_serial_free(struct task_serial_context *context)
 {
     //TODO: free resources allocated in task_serial_init
-    cudaFree(context->image_in);
-    cudaFree(context->image_out);
-    cudaFree(context->maps);
+    CUDA_CHECK(cudaFreeHost(context->image_in));
+    CUDA_CHECK(cudaFreeHost(context->image_out));
+    CUDA_CHECK(cudaFreeHost(context->maps));
     free(context);
 }
 /****************************************************************************************/
@@ -248,8 +248,8 @@ void gpu_bulk_process(struct gpu_bulk_context *context, uchar *images_in, uchar 
 void gpu_bulk_free(struct gpu_bulk_context *context)
 {
     //TODO: free resources allocated in gpu_bulk_init
-    cudaFree(context->image_in);
-    cudaFree(context->image_out);
-    cudaFree(context->maps);
+    CUDA_CHECK(cudaFreeHost(context->image_in));
+    CUDA_CHECK(cudaFreeHost(context->image_out));
+    CUDA_CHECK(cudaFreeHost(context->maps));
     free(context);
 }
